@@ -131,14 +131,13 @@
 ;; No new examples.
 
 (require (for-syntax syntax/parse)
-         (for-syntax racket))
+         (for-syntax (except-in racket range)))
 
 (begin-for-syntax
-  ; a closed interval of natural numbers
-  (struct range (low high))
+  (require "helper.rkt")
   ; code-gen-v3 : (list of range) id -> syntax
   (define (code-gen-v3 ranges x)
-    (printf "ranges equals ~e\n" ranges)
+    ;(printf "ranges equals ~e\n" ranges)
     (with-syntax ([x x])
        (let*-values ([(len) (length ranges)])
          (cond
@@ -203,17 +202,26 @@
 ;(define-syntax-rule (integer-ranges-predicate-v4 [start end] ...)
 ;  (lambda (x)
 ;    (integer-ranges-predicate-v4* #f x [start end] ...)))
-#|
-(define-syntax (integer-ranges-predicate-v4 stx)
-  (syntax-case stx ()
-    [(_ range ...)
-     (let* ([ranges (syntax->list #'(range ...))]
-            [new-ranges (map (lambda (r)
-                               (syntax-case r ()
-                                 [num         #'[num num]]
-                                 [[start end] #'[start end]])) ranges)])
-       #`(lambda (x) (integer-ranges-predicate-v4* #f x #,@new-ranges)))]))
 
+(begin-for-syntax
+  ; a closed interval of natural numbers
+  ;(struct range (low high))
+  
+  ; code-gen-v4 : (list of range) id -> syntax
+  (define (code-gen-v4 ranges x)
+    ;(printf "ranges equals ~e\n" ranges)
+    (code-gen-v3 (sort-and-remove-overlaps ranges) x)))
+
+(define-syntax (integer-ranges-predicate-v4 stx)
+
+  (define-syntax-class Range
+    (pattern [start:nat end:nat]
+             #:attr ast (range (syntax->datum #'start) (syntax->datum #'end)))
+    (pattern num:nat #:attr ast (range (syntax->datum #'num) (syntax->datum #'num))))
+  (syntax-parse stx
+    [(_ r:Range ...)
+     #`(lambda (x) #,(code-gen-v4 (attribute r.ast) #'x))]))
+#|
 (define-syntax (integer-ranges-predicate-v4* stx)
   (syntax-case stx ()
     [(_ if-tree x) #'if-tree]
@@ -240,7 +248,7 @@
                          #`(if #,cond-stx #,then-stx #,new-else-stx))
                        new-if)))])
            #`(integer-ranges-predicate-v4* #,(cons-if-tree #'if-tree) x #,@rest))))]))
-
+|#
 (define small-composite1-v4?
   (integer-ranges-predicate-v4
    [6 6] [4 4] [9 12] [8 10]))
@@ -249,8 +257,7 @@
   (check-equal? (small-composite1-v4? 12) (small-composite? 12))
   (check-equal? (small-composite1-v4? 6) (small-composite? 6))
   (check-equal? (small-composite1-v4? 5) (small-composite? 5)))
-|#
-#|
+
 (define small-composite2-v4?
   (integer-ranges-predicate-v4
    [4 4] [6 6] [8 10] [12 12] [14 16] [18 18] [20 22] [24 28]))
@@ -297,7 +304,6 @@
     (test-case (format "character ~s" k)
       (check-equal? (ascii-alphanum3-v4? k)
                     (ascii-alphanum2-v3? k)))))
-|#
 
 ;; Examples:
 
