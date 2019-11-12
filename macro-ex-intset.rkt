@@ -96,7 +96,7 @@
   (check-equal? (small-composite1? 5) (small-composite? 5)))
 
 (define small-composite2?
-  (integer-ranges-predicate-v2
+  (integer-ranges-predicate-v3
    [4 4] [6 6] [8 10] [12 12] [14 16] [18 18] [20 22] [24 28]))
 
 
@@ -106,8 +106,12 @@
     (test-case (format "number ~s" k)
       (check-equal? (small-composite2? k) (not (prime? k))))))
 
+;(define bad-range?
+;  (integer-ranges-predicate-v3
+;   [4 4] [6 6] [8 10] [12 "adadd"] [14 16] [18 18] [20 22] [24 28]))
+
 (define ascii-alphanum1?
-  (integer-ranges-predicate-v2
+  (integer-ranges-predicate-v3
    [48 57] [65 90] [97 122]))
 
 (module+ test
@@ -129,22 +133,36 @@
 (require (for-syntax syntax/parse)
          (for-syntax racket))
 
-(define-syntax-rule (integer-ranges-predicate-v3 [start end] ...)
-    (lambda (x)
-      (integer-ranges-predicate-v3* x [start end] ...)))
+(begin-for-syntax
+  ; a closed interval of natural numbers
+  (struct range (low high))
+  ; code-gen-v3 : (list of range) id -> syntax
+  (define (code-gen-v3 ranges x)
+    (printf "ranges equals ~e\n" ranges)
+    (with-syntax ([x x])
+       (let*-values ([(len) (length ranges)])
+         (cond
+           [(= len 0) #'#f]
+           [(= len 1) (with-syntax ([s (range-low (car ranges))]
+                                    [e (range-high (car ranges))])
+                        #'(<= s x e))]
+           [else (let-values ([(rs-l rs-r) (split-at ranges (round (/ len 2)))])
+                   (with-syntax ([s (range-low (car rs-r))])
+                     #`(if (< x s)
+                           #,(code-gen-v3 rs-l #'x)
+                           #,(code-gen-v3 rs-r #'x))))])))))
 
-(define-syntax (integer-ranges-predicate-v3* stx)
-  (syntax-case stx ()
-    [(_ x [start end] ...)
-     (let*-values ([(ranges) (syntax->list #'([start end] ...))]
-                   [(len) (length ranges)]
-                   [(rs-l rs-r) (split-at ranges (round (/ len 2)))])
-       (with-syntax ([[s e] (car rs-r)])
-         (if (< len 2)
-             #'(<= s x e)
-             #`(if (< x s)
-                   (integer-ranges-predicate-v3* x #,@rs-l)
-                   (integer-ranges-predicate-v3* x #,@rs-r)))))]))
+(define-syntax (integer-ranges-predicate-v3 stx)
+
+  (define-syntax-class Range
+    (pattern [start:nat end:nat]
+             #:attr ast (range (syntax->datum #'start) (syntax->datum #'end)))
+    (pattern num:nat #:attr ast (range (syntax->datum #'num) (syntax->datum #'num))))
+  (syntax-parse stx
+    [(_ r:Range ...)
+     #`(lambda (x) #,(code-gen-v3 (attribute r.ast) #'x))]))
+
+
 
 (define small-composite1-v3?
   (integer-ranges-predicate-v3
@@ -182,10 +200,9 @@
 ;; extend the macro to handle singleton ranges written as a single numeric
 ;; constant.
 
-(define-syntax-rule (integer-ranges-predicate-v4 [start end] ...)
-  (lambda (x)
-    (integer-ranges-predicate-v4* #f x [start end] ...)))
-
+;(define-syntax-rule (integer-ranges-predicate-v4 [start end] ...)
+;  (lambda (x)
+;    (integer-ranges-predicate-v4* #f x [start end] ...)))
 #|
 (define-syntax (integer-ranges-predicate-v4 stx)
   (syntax-case stx ()
@@ -196,7 +213,7 @@
                                  [num         #'[num num]]
                                  [[start end] #'[start end]])) ranges)])
        #`(lambda (x) (integer-ranges-predicate-v4* #f x #,@new-ranges)))]))
-|#
+
 (define-syntax (integer-ranges-predicate-v4* stx)
   (syntax-case stx ()
     [(_ if-tree x) #'if-tree]
@@ -232,7 +249,7 @@
   (check-equal? (small-composite1-v4? 12) (small-composite? 12))
   (check-equal? (small-composite1-v4? 6) (small-composite? 6))
   (check-equal? (small-composite1-v4? 5) (small-composite? 5)))
-
+|#
 #|
 (define small-composite2-v4?
   (integer-ranges-predicate-v4
@@ -283,9 +300,9 @@
 |#
 
 ;; Examples:
-#|
+
 (define unassigned-in-unicode-3.2?
-  (integer-ranges-predicate
+  (integer-ranges-predicate-v3
    #x0221
    [#x0234 #x024F]
    [#x02AE #x02AF]
@@ -683,7 +700,7 @@
    [#xE0002 #xE001F]
    [#xE0080 #xEFFFD]
    ))
-|#
+
 
 
 ;; ------------------------------------------------------------
