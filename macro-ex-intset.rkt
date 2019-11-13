@@ -716,16 +716,49 @@
 ;; `define-integer-set`, it should raise an error at compile time specifically
 ;; saying so.
 
-#|
+
+(begin-for-syntax
+  (define-syntax-class Range
+    (pattern [start:nat end:nat]
+             #:attr ast (list (range (syntax->datum #'start) (syntax->datum #'end))))
+    (pattern num:nat #:attr ast (list (range (syntax->datum #'num) (syntax->datum #'num))))
+    (pattern (~var int-set (static list? "integer set"))
+             #:attr ast (attribute int-set.value)))
+    ;(pattern int-set:id
+    ;         #:attr ast (syntax-local-value
+    ;                     #'int-set (lambda () #f))
+    ;         #:fail-unless (attribute ast) "name is not defined as an integer set"))
+
+  (define (make-list-of-ranges ranges)
+    #`(list #,@(map (lambda (r) #`(range #,(range-low r) #,(range-high r))) ranges))))
+
+(define-syntax (define-integer-set stx)
+  (syntax-parse stx
+    [(_ ident:id r:Range ...)
+     #`(define-syntax ident #,(make-list-of-ranges (append* (attribute r.ast))))]))
+
+(define-syntax (integer-ranges-predicate-v5 stx)
+  (syntax-parse stx
+    [(_ r:Range ...)
+     #`(lambda (x) #,(code-gen-v4 (append* (attribute r.ast)) #'x))]))
+
+
 ;; Examples:
 
 (define-integer-set ascii-alpha [65 90] [97 122])
+
+(define-integer-set ascii-alpha2 [48 57] ascii-alpha)
+
 (define ascii-alphanum-v2?
-  (integer-ranges-predicate [48 57] ascii-alphanum))
+  (integer-ranges-predicate-v5 ascii-alpha2))
+
+;(define ascii-alphanum-v2-bad?
+;  (integer-ranges-predicate-v5 [48 57] ascii-alphanum))
 
 ;; Tests
-(for ([k (in-range 256)])
-  (check-equal? (ascii-alphanum-v2? k)
-                (or (char-alphabetic? (integer->char k))
-                    (char-numeric? (integer->char k)))))
-|#
+(module+ test
+  (for ([k (in-range 128)])
+    (check-equal? (ascii-alphanum-v2? k)
+                  (or (char-alphabetic? (integer->char k))
+                      (char-numeric? (integer->char k))))))
+

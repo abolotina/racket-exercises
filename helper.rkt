@@ -26,12 +26,16 @@
                                                  x
                                                  (range (range-low x) (- (range-low y) 1))))
                                            sorted-rs
-                                           (append (cdr sorted-rs) (list (range (range-high last-el) (range-high last-el))))))])
+                                           (append (cdr sorted-rs) (list (range (range-high last-el)
+                                                                                (range-high last-el))))))])
       unoverlap-sorted-rs))
+
+;(define-syntax-rule (make-list-of-ranges [start end] ...)
+;  (list (range start end) ...))
 
 ;(sort-and-remove-overlaps (list (range 6 6) (range 4 4) (range 9 12) (range 8 10)))
 ; =
-;(sort-and-remove-overlaps (map (lambda (x) (range (car x) (cadr x)))'(
+;(sort-and-remove-overlaps (make-list-of-ranges
 ;[6 6] [4 4] [9 12] [8 10]
-;)))
+;))
 
