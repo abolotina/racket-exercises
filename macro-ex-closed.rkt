@@ -73,6 +73,7 @@
        (loop-exprs #'(e0 e ...))]
       [(let-values ([(x:id ...) rhs] ...) body ...)
        (loop-exprs #'((#%plain-lambda (x ... ...) body ...) rhs ...))]
+      ; (loop #'(#%plain-lambda (x ... ...) rhs ... body ...))]
       [(letrec-values ([(x:id ...) rhs] ...) body ...)
        (loop #'(#%plain-lambda (x ... ...) rhs ... body ...))]
       [(letrec-syntaxes+values _ ([(x:id ...) rhs] ...) body ...)
@@ -123,15 +124,15 @@
       (let ([foo-rec 10])
         (must-be-closed
          (let ([foo-rec
-                (lambda (x y)
-                  (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
-           (foo-rec 10 2)))))))
+                (lambda ()
+                  foo-rec)])
+           13))))))
   
   ;; For comparison:
   (define let-test (letrec ([foo-rec
-                             (lambda (x y)
-                               (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
-                     (foo-rec 10 2)))
+                             (lambda ()
+                               foo-rec)])
+                     13))
 
   ;; Okay
   (check-equal?
@@ -139,9 +140,9 @@
     (let ([foo-rec 10])
       (must-be-closed
        (letrec ([foo-rec
-                 (lambda (x y)
-                   (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
-         (foo-rec 10 2)))))
+                 (lambda ()
+                   foo-rec)])
+         13))))
    let-test)
   
 ;(let ([x 20]) (must-be-closed (letrec () x)))
@@ -218,4 +219,34 @@
                        [lfv (remove-duplicates (local-free-vars ee) free-identifier=?)])
                   #`(pretty-closure 'e '#,lfv (list #,@lfv) (lambda #,lfv #,ee)))]))
 
-(let ([y 10]) (reify-closure (lambda (x) (cons y y))))
+;(let ([y 10]) (reify-closure (lambda (x) (cons y y))))
+
+;; ------------------------------------------------------------
+
+(require (for-syntax syntax/id-table))
+
+(begin-for-syntax
+  ;; number-type-check-fun : immutable-free-id-table? Syntax[ExpandedExpression] -> (or/c Boolean pair?)
+  (define (number-type-check-fun id-table ee)
+    (define (loop . ees) (loop-exprs ees))
+    (define (loop-exprs ees) (map number-type-check-fun (stx->list ees)))
+    (syntax-parse ee
+      #:literal-sets (kernel-literals)
+      [num:number #t]
+      [var:id (free-id-table-ref #'var (raise-syntax-error #f "unbound identifier" ee #'var))]
+      [(#%plain-lambda f:formals body ...)
+       (cons (length #'f) (loop-exprs id-table #'(body ...)))]
+      [((~or* let-values letrec-values) ([(x:id) rhs]) body ...)
+       (loop-exprs (free-id-table-set id-table #'x (loop #'rhs))  #'(body ...))]
+      ;[(letrec-values ([(x:id) rhs]) body ...)
+      ; __]
+      [(#%plain-app (~or* + - * /) arg1 arg2)
+       (loop #'arg1 #'arg2)]
+      [(#%plain-app proc arg ...)
+       (let ([id-val (free-id-table-ref #'proc)])
+         (if (pair? id-val)
+             (if (= (car id-val) (length (syntax->list #'(arg ...))))
+                 (cdr id-val)
+                 (raise-syntax-error #f "improper number of arguments in application" ee))
+             (raise-syntax-error #f "expected a procedure" ee #'proc)))]
+      [_ (raise-syntax-error #f "not a number or unsupported syntax")])))
