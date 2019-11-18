@@ -182,10 +182,12 @@
     (define (not-member-of-lst x) (not (for/or ([y (in-list lst)]) (free-identifier=? x y))))
     (if (not-member-of-lst el) (cons el lst) lst)))
 
+(require (for-syntax racket/list))
+
 (define-syntax (reify-closure stx)
   (syntax-parse stx
-    [(_ e:expr) (let* ([lfv (foldl cons-distinct '() (local-free-vars (local-expand #'e 'expression null)))]
-                       [lfv-vals (map syntax->datum lfv)])
-                  #`'(pretty-closure 'e '#,lfv '#,lfv-vals (lambda #,lfv e)))]))
+    [(_ e:expr) (let* ([ee (local-expand #'e 'expression null)]
+                       [lfv (remove-duplicates (local-free-vars ee) free-identifier=?)])
+                  #`(pretty-closure 'e '#,lfv (list #,@lfv) (lambda #,lfv #,ee)))]))
 
 (let ([y 10]) (reify-closure (lambda (x) (cons y y))))
