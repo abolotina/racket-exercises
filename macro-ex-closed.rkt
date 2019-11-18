@@ -116,6 +116,34 @@
          (fact 10)))))
    fact-of-10)
 
+  (check-exn
+   #rx"expression has free local variables"
+   (lambda ()
+     (convert-syntax-error
+      (let ([foo-rec 10])
+        (must-be-closed
+         (let ([foo-rec
+                (lambda (x y)
+                  (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
+           (foo-rec 10 2)))))))
+  
+  ;; For comparison:
+  (define let-test (letrec ([foo-rec
+                             (lambda (x y)
+                               (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
+                     (foo-rec 10 2)))
+
+  ;; Okay
+  (check-equal?
+   (convert-syntax-error
+    (let ([foo-rec 10])
+      (must-be-closed
+       (letrec ([foo-rec
+                 (lambda (x y)
+                   (if (= x 0) y (foo-rec (sub1 x) (* 2 y))))])
+         (foo-rec 10 2)))))
+   let-test)
+  
 ;(let ([x 20]) (must-be-closed (letrec () x)))
   
 
