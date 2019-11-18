@@ -171,8 +171,21 @@
 ;;   free local variables and runs the original expression with
 ;;   them. (You may assume that none of the variables are mutated.)
 
-
 ;; Example:
 ;; (let ([y 10]) (reify-closure (lambda (x) y)))
 ;; =>
 ;; (pretty-closure '(lambda (x) y) '(y) '(10) (lambda (y) (lambda (x) y)))
+
+(begin-for-syntax
+  ;; cons-distinct : Identifier (Listof Identifier) -> (Listof Identifier)
+  (define (cons-distinct el lst)
+    (define (not-member-of-lst x) (not (for/or ([y (in-list lst)]) (free-identifier=? x y))))
+    (if (not-member-of-lst el) (cons el lst) lst)))
+
+(define-syntax (reify-closure stx)
+  (syntax-parse stx
+    [(_ e:expr) (let* ([lfv (foldl cons-distinct '() (local-free-vars (local-expand #'e 'expression null)))]
+                       [lfv-vals (map syntax->datum lfv)])
+                  #`'(pretty-closure 'e '#,lfv '#,lfv-vals (lambda #,lfv e)))]))
+
+(let ([y 10]) (reify-closure (lambda (x) (cons y y))))
