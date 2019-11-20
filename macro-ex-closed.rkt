@@ -96,7 +96,7 @@
 
 (define-syntax (must-be-closed stx)
   (syntax-parse stx
-    [(_ e:expr) (let ([lfv (local-free-vars (local-expand #'e 'expression null))])
+    [(_ e:expr) (let* ([lfv (local-free-vars (local-expand #'e 'expression null))])
                   (if (null? lfv)
                       #'e
                       (raise-syntax-error #f "expression has free local variables" stx (car lfv))))]))
@@ -223,30 +223,36 @@
 
 ;; ------------------------------------------------------------
 
-(require (for-syntax syntax/id-table))
+(require (for-syntax "type-check-helper.rkt"
+                     syntax/id-table))
 
-(begin-for-syntax
-  ;; number-type-check-fun : immutable-free-id-table? Syntax[ExpandedExpression] -> (or/c Boolean pair?)
-  (define (number-type-check-fun id-table ee)
-    (define (loop . ees) (loop-exprs ees))
-    (define (loop-exprs ees) (map number-type-check-fun (stx->list ees)))
-    (syntax-parse ee
-      #:literal-sets (kernel-literals)
-      [num:number #t]
-      [var:id (free-id-table-ref #'var (raise-syntax-error #f "unbound identifier" ee #'var))]
-      [(#%plain-lambda f:formals body ...)
-       (cons (length #'f) (loop-exprs id-table #'(body ...)))]
-      [((~or* let-values letrec-values) ([(x:id) rhs]) body ...)
-       (loop-exprs (free-id-table-set id-table #'x (loop #'rhs))  #'(body ...))]
-      ;[(letrec-values ([(x:id) rhs]) body ...)
-      ; __]
-      [(#%plain-app (~or* + - * /) arg1 arg2)
-       (loop #'arg1 #'arg2)]
-      [(#%plain-app proc arg ...)
-       (let ([id-val (free-id-table-ref #'proc)])
-         (if (pair? id-val)
-             (if (= (car id-val) (length (syntax->list #'(arg ...))))
-                 (cdr id-val)
-                 (raise-syntax-error #f "improper number of arguments in application" ee))
-             (raise-syntax-error #f "expected a procedure" ee #'proc)))]
-      [_ (raise-syntax-error #f "not a number or unsupported syntax")])))
+(define-syntax (number-type-check stx)
+  (syntax-parse stx
+    [(_ e:expr) (let ([ee (local-expand #'e 'expression #f)])
+                  (printf "~s\n" (syntax->datum ee))
+                  (if (number-type-check-fun ee)
+                      ee
+                      (raise-syntax-error #f "type check failed" stx #'e)))]))
+
+(module+ test
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check 1))
+   1)
+
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (let ([a 1]) a)))
+   1)
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check "a"))))
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (let ([a "a"]) a))))))
