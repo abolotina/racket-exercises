@@ -12,9 +12,6 @@
 ;; "defined at the REPL" and unbound.)
 
 (begin-for-syntax
-  ;; local-var? : Identifier -> Boolean
-  ;; Returns #t if id is not imported from another module; that is, it is bound
-  ;; locally or unbound.
   (define (local-var? id)
     (match (identifier-binding id)
       [(list* src-mod src-sym _)
@@ -28,7 +25,6 @@
   (define zzz 20)
   (check-equal? (phase1-eval (local-var? #'zzz)) #t)
   (check-equal? (phase1-eval (local-var? #'list)) #f))
-
 
 ;; ------------------------------------------------------------
 
@@ -50,7 +46,7 @@
     (pattern (id:id ...) #:attr ast (syntax->list #'(id ...)))
     (pattern (id:id ...+ . rest-id:id) #:attr ast (cons #'rest-id (syntax->list #'(id ...))))
     (pattern rest-id #:attr ast (list #'rest-id)))
-  
+
   ;; local-free-vars : Syntax[ExpandedExpression] -> (Listof Identifier)
   ;; Returns a list of occurrences of local free vars of the expression.
   ;; Duplicates are not removed.
@@ -92,16 +88,14 @@
     (define (not-member-of-ys x) (not (for/or ([y (in-list ys)]) (free-identifier=? x y))))
     (filter not-member-of-ys xs)))
 
-
-
+(module+ test
+  (require rackunit syntax/macro-testing))
 (define-syntax (must-be-closed stx)
   (syntax-parse stx
     [(_ e:expr) (let* ([lfv (local-free-vars (local-expand #'e 'expression null))])
                   (if (null? lfv)
                       #'e
                       (raise-syntax-error #f "expression has free local variables" stx (car lfv))))]))
-
-
 
 (module+ test
   ;; For comparison:
@@ -145,7 +139,7 @@
          13))))
    let-test)
   
-;(let ([x 20]) (must-be-closed (letrec () x)))
+  ;(let ([x 20]) (must-be-closed (letrec () x)))
   
 
   (check-exn
@@ -223,26 +217,21 @@
 
 ;; ------------------------------------------------------------
 
-(require (for-syntax "type-check-helper.rkt"
-                     syntax/id-table))
+(require (for-syntax "type-check-helper.rkt"))
 
 (define-syntax (number-type-check stx)
   (syntax-parse stx
-    [(_ e:expr) (let ([ee (local-expand #'e 'expression #f)])
-                  (printf "~s\n" (syntax->datum ee))
-                  (if (number-type-check-fun ee)
-                      ee
-                      (raise-syntax-error #f "type check failed" stx #'e)))]))
+    [(_ e:expr) (let ([err (lambda () (raise-syntax-error #f "type check failed" stx #'e))])
+                  (with-handlers ([exn:fail:syntax? (lambda (e) (err))])
+                    (let ([ee (local-expand #'(must-be-closed e) 'expression null)])
+                      (if (number-type-check-fun ee)
+                          ee
+                          (err)))))]))
 
 (module+ test
   (check-equal?
    (convert-syntax-error
     (number-type-check 1))
-   1)
-
-  (check-equal?
-   (convert-syntax-error
-    (number-type-check (let ([a 1]) a)))
    1)
 
   (check-exn
@@ -251,8 +240,69 @@
      (convert-syntax-error
       (number-type-check "a"))))
 
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (let ([a 1]) a)))
+   1)
+
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (let ([a 1]) (+ 1 a))))
+   2)
+
+  (define something 5)
   (check-exn
    #rx"type check failed"
    (lambda ()
      (convert-syntax-error
-      (number-type-check (let ([a "a"]) a))))))
+      (number-type-check (let ([a 1]) (+ a something))))))
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check ((lambda (x) x) 5 6)))))
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check ((lambda (x) x) 5)))
+   5)
+  
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (let ([a "a"]) a)))))
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (let ([foo (lambda (x) x)]) (foo "a"))))))
+
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (let ([foo (lambda (x) x)]) (foo 1))))
+   1)
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (let ([foo (lambda (x) (+ 1 a))]) (foo "a"))))))
+
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (let ([foo (lambda (x) (+ 1 x))]) (foo 1))))
+   2)
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (letrec ([foo (lambda (x) foo)]) (foo "a"))))))
+
+  (check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (letrec ([foo (lambda (x) foo)]) (foo 1)))))))
