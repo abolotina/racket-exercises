@@ -224,7 +224,7 @@
     [(_ e:expr) (let ([err (lambda () (raise-syntax-error #f "type check failed" stx #'e))])
                   (with-handlers ([exn:fail:syntax? (lambda (e) (err))])
                     (let ([ee (local-expand #'(must-be-closed e) 'expression null)])
-                      (if (number-type-check-fun ee)
+                      (if (eq? 'number (number-type-check-fun ee))
                           ee
                           (err)))))]))
 
@@ -294,7 +294,15 @@
    (convert-syntax-error
     (number-type-check (let ([foo (lambda (x) (+ 1 x))]) (foo 1))))
    2)
-
+#|
+  (check-equal?
+   (convert-syntax-error
+    (number-type-check (letrec ([f (lambda (x) (g x))]
+                                [N 12]
+                                [g (lambda (x) (+ x N))])
+                         (f 3))))
+   15)
+|#
   (check-exn
    #rx"type check failed"
    (lambda ()
