@@ -37,6 +37,8 @@
 (define-syntax-rule (?) ())
 (define-syntax-rule (app) ())
 
+(require (for-syntax racket/struct-info racket/syntax))
+
 (define-syntax (minimatch** stx)
   (syntax-parse stx
     #:literals (cons quote ? app)
@@ -73,7 +75,26 @@
                                    (app (lambda (ls) (apply values ls)) pat2 ...)
                                    res-expr
                                    match-rest)
-                      match-rest))]))
+                      match-rest))]
+    [(_ val (struct-id:id field-val ...) res-expr match-rest)
+     (let* ([struct-info (extract-struct-info (syntax-local-value #'struct-id))]
+            [struct-pred (caddr struct-info)]
+            [fields (reverse (cadddr struct-info))]
+            [fields-count (length fields)]
+            [match-fields
+             (with-syntax ([(field-acc ...) fields])
+               (if (< 0 fields-count)
+                   (list #'(app (lambda (v) (values (field-acc v) ...))
+                                field-val ...))
+                   null))])
+       (if (= fields-count (length (syntax->list #'(field-val ...)))) 
+           #`(minimatch** val
+                          (? #,struct-pred #,@match-fields)
+                          res-expr
+                          match-rest)
+           (raise-syntax-error #f (format "invalid number of fields for structure ~s"
+                                          (syntax->datum (cadr struct-info)))
+                               stx)))]))
 
 (require rackunit)
 
@@ -139,13 +160,33 @@
 ;; Hint: use extract-struct-info, and see the whole page where that
 ;; procedure is documented
 
+(struct point (x y))
+(define origin (point 0 0))
 
-;; (struct point (x y))
-;; (define origin (point 0 0))
+(check-equal?
+ (minimatch origin
+            [(point (? zero? a) b) (list a b)])
+ '(0 0))
 
-;; (match origin
-;;   [(point (? zero? a) b) (list a b)]) = (list 0 0)
+(check-equal?
+ (minimatch origin
+            [(point (? zero? a) '0) a])
+ 0)
 
+(struct tree (val left right))
+
+(check-equal?
+ (minimatch (tree 0 (tree 1 #f #f) #f)
+            [(tree a (tree b  '#f '#f) '#f) (list a b)])
+ '(0 1))
+
+(struct nil ())
+
+(check-equal?
+ (let ([z (nil)])
+   (minimatch z
+              [(nil) 1]))
+ 1)
 
 ;; ------------------------------------------------------------
 ;; Ex 3: Extend minimatch to support pattern-transformers, and provide
