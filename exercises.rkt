@@ -200,4 +200,4 @@
 
 (minimatch1 (cons 5 '2) (cons x v) (+ x v))
 (minimatch1 (list 1 2 3) (cons x y) y)
-(minimatch1 (list 1 2 3) (cons cons (cons x y)) y)
+;(minimatch1 (list 1 2 3) (cons cons (cons x y)) y)

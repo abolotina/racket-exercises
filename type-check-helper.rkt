@@ -15,6 +15,12 @@
   (pattern (#%plain-lambda f:formals body ...)
            #:attr ast (cons (attribute f.ast) (syntax->list #'(body ...)))))
 
+(define-syntax-class let-clause
+  (pattern [(x:id) rhs:Lambda]
+           #:attr ast (function-type (length (car (attribute rhs.ast)))))
+  (pattern [(x:id) rhs]
+           #:attr ast 'number))
+
 (struct function-type (arity))
 
 ;; TypeCheckResult = (U 'number function-type? 'bad)
@@ -29,12 +35,16 @@
 ;; number-type-check-fun* : immutable-free-id-table? Syntax[ExpandedExpression] -> TypeCheckResult
 (define (number-type-check-fun* id-table ee)
   (define (loop . ees) (loop-exprs id-table ees))
-  (define (loop-exprs t ees) (andmap (lambda (ee) (number-type-check-fun* t ee))
-                                     (stx->list ees)))
-  (define (update-id-table idents)
+  (define (loop-exprs t ees) (if (andmap (lambda (ee)
+                                           (eq? 'number (number-type-check-fun* t ee)))
+                                         (stx->list ees))
+                                 'number
+                                 'bad))
+  (define (update-id-table idents types)
     (for/fold ([t id-table])
-              ([ident idents])
-      (free-id-table-set t ident 'number)))
+              ([ident idents]
+               [type types])
+      (free-id-table-set t ident type)))
   (syntax-parse ee
     #:literal-sets (kernel-literals)
     #:literals (+ - * /)
@@ -42,29 +52,21 @@
     [var:id (free-id-table-ref id-table #'var 'bad)]
     [lam:Lambda
      (loop-exprs
-      (update-id-table (car (attribute lam.ast)))
+      (let ([idents (car (attribute lam.ast))])
+        (update-id-table idents (build-list (length idents)
+                                            (lambda (x) 'number))))
       #'(lam.body ...))]
-    [(let-values ([(x:id) rhs-lam:Lambda]) body ...)
-     (if (eq? 'number (loop #'rhs-lam))
-         (loop-exprs
-          (free-id-table-set id-table #'x (function-type (length (car (attribute rhs-lam.ast)))))
-          #'(body ...))
-         'bad)]
-    [(letrec-values ([(x:id) rhs-lam:Lambda]) body ...)
-     (let ([arity (length (car (attribute rhs-lam.ast)))])
-       (loop-exprs
-        (free-id-table-set
-         id-table
-         #'x
-         (let ([body-type (loop-exprs
-                           (free-id-table-set id-table #'x (function-type arity))
-                           (list #'rhs-lam))])
-           (if (eq? 'number body-type)
-               (function-type arity)
-               'bad)))
-        #'(body ...)))]
-    [((~or* let-values letrec-values) ([(x:id) rhs]) body ...)
-     (loop-exprs (free-id-table-set id-table #'x (loop #'rhs)) #'(body ...))]
+    ;;[(let-values ([(x:id) rhs-lam:Lambda]) body ...)
+    ;; (if (eq? 'number (loop #'rhs-lam))
+    ;;     (loop-exprs
+    ;;      (free-id-table-set id-table #'x (function-type (length (car (attribute rhs-lam.ast)))))
+    ;;      #'(body ...))
+    ;;     'bad)]
+    ;; `let-values` will work correctly in the macro because of calling `must-be-closed` first
+    [((~or* let-values letrec-values) (clause:let-clause ...) body ...)
+     (loop-exprs
+      (update-id-table (syntax->list #'(clause.x ...)) (attribute clause.ast))
+      #'(clause.rhs ... body ...))]
     [(#%plain-app (~or* + - * /) arg1 arg2)
      (loop #'arg1 #'arg2)]
     [(#%plain-app lam:Lambda arg ...)

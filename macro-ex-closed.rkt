@@ -160,7 +160,19 @@
         (must-be-closed
          (let ()
            (define (fact n) (if (zero? n) 1 (* n (fact (sub1 n)))))
-           (fact (quotient zzz 2)))))))))
+           (fact (quotient zzz 2))))))))
+
+  (check-exn
+   #rx"expression has free local variables"
+   (lambda ()
+     (convert-syntax-error
+      (let ([x 20]
+            [n 10])
+        (must-be-closed
+         (let ([f (lambda (x) n)]
+               [n 20])
+           (define (fact n) (if (zero? n) 1 (* n (fact (sub1 n)))))
+           (fact (quotient 4 2)))))))))
 
 
 
@@ -294,7 +306,7 @@
    (convert-syntax-error
     (number-type-check (let ([foo (lambda (x) (+ 1 x))]) (foo 1))))
    2)
-#|
+
   (check-equal?
    (convert-syntax-error
     (number-type-check (letrec ([f (lambda (x) (g x))]
@@ -302,7 +314,7 @@
                                 [g (lambda (x) (+ x N))])
                          (f 3))))
    15)
-|#
+
   (check-exn
    #rx"type check failed"
    (lambda ()
@@ -313,4 +325,10 @@
    #rx"type check failed"
    (lambda ()
      (convert-syntax-error
-      (number-type-check (letrec ([foo (lambda (x) foo)]) (foo 1)))))))
+      (number-type-check (letrec ([foo (lambda (x) foo)]) (foo 1))))))
+
+(check-exn
+   #rx"type check failed"
+   (lambda ()
+     (convert-syntax-error
+      (number-type-check (let ([foo (lambda (x) (foo x))]) (foo 1)))))))
