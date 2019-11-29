@@ -77,24 +77,43 @@
                                    match-rest)
                       match-rest))]
     [(_ val (struct-id:id field-val ...) res-expr match-rest)
-     (let* ([struct-info (extract-struct-info (syntax-local-value #'struct-id))]
-            [struct-pred (caddr struct-info)]
-            [fields (reverse (cadddr struct-info))]
-            [fields-count (length fields)]
-            [match-fields
-             (with-syntax ([(field-acc ...) fields])
-               (if (< 0 fields-count)
-                   (list #'(app (lambda (v) (values (field-acc v) ...))
-                                field-val ...))
-                   null))])
-       (if (= fields-count (length (syntax->list #'(field-val ...)))) 
-           #`(minimatch** val
-                          (? #,struct-pred #,@match-fields)
-                          res-expr
-                          match-rest)
-           (raise-syntax-error #f (format "invalid number of fields for structure ~s"
-                                          (syntax->datum (cadr struct-info)))
-                               stx)))]))
+     (let ([slv (syntax-local-value #'struct-id)])
+       (if (struct-info? slv)
+           (let* ([struct-info (extract-struct-info slv)]
+                  [struct-pred (caddr struct-info)]
+                  [fields (reverse (cadddr struct-info))]
+                  [fields-count (length fields)]
+                  [match-fields
+                   (with-syntax ([(field-acc ...) fields])
+                     (if (< 0 fields-count)
+                         (list #'(app (lambda (v) (values (field-acc v) ...))
+                                      field-val ...))
+                         null))])
+             (if (= fields-count (length (syntax->list #'(field-val ...)))) 
+                 #`(minimatch** val
+                                (? #,struct-pred #,@match-fields)
+                                res-expr
+                                match-rest)
+                 (raise-syntax-error #f (format "invalid number of fields for structure ~s"
+                                                (syntax->datum (cadr struct-info)))
+                                     stx)))
+           #`(minimatch** val #,(transform #'(List field-val ...)) res-expr match-rest)))]))
+
+(begin-for-syntax
+  (define (transform stx)
+    (define (loop es)
+      (with-syntax ([(te ...) (map transform es)])
+         #'(te ...)))
+    
+    (syntax-parse stx
+      [(ident:id pat ...)
+       (let ([slv (syntax-local-value #'ident (lambda () #f))])
+         (if (transformer? slv)
+             (transform ((transformer-stx slv) stx))
+             (loop (syntax->list #'(ident pat ...)))))]
+      [(e ...)
+       (loop (syntax->list #'(e ...)))]
+      [_ stx])))
 
 (require rackunit)
 
@@ -197,13 +216,26 @@
 ;; language of patterns. For example, one could add support for list
 ;; patterns with the following definition:
 
-;;   (define-pattern-transformer List
-;;     (lambda (stx)
-;;       (syntax-parse stx
-;;         [(_)
-;;          #'(quote ())]
-;;         [(_ p1 p ...)
-;;          #'(cons p1 (List p ...))])))
+(begin-for-syntax
+  (struct transformer (stx)))
+
+(define-syntax (define-pattern-transformer stx)
+  (syntax-parse stx
+    [(_ name:id e:expr)
+     #'(define-syntax name (transformer e))]))
+
+(define-pattern-transformer List
+  (lambda (stx)
+    (syntax-parse stx
+      [(_)
+       #'(quote ())]
+      [(_ p1 p ...)
+       #'(cons p1 (List p ...))])))
+
+(check-equal?
+ (minimatch (list 1 2 3)
+            [(List x y z) (list x y z)])
+ '(1 2 3))
 
 ;; With that definition, minimatch should support List patterns: A
 ;; pattern of the form (List sub-pattern ...) should match a value if
