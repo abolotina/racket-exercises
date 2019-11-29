@@ -76,8 +76,8 @@
                                    res-expr
                                    match-rest)
                       match-rest))]
-    [(_ val (struct-id:id field-val ...) res-expr match-rest)
-     (let ([slv (syntax-local-value #'struct-id)])
+    [(_ val (struct-or-transformer:id field-val ...) res-expr match-rest)
+     (let ([slv (syntax-local-value #'struct-or-transformer)])
        (if (struct-info? slv)
            (let* ([struct-info (extract-struct-info slv)]
                   [struct-pred (caddr struct-info)]
@@ -97,20 +97,31 @@
                  (raise-syntax-error #f (format "invalid number of fields for structure ~s"
                                                 (syntax->datum (cadr struct-info)))
                                      stx)))
-           #`(minimatch** val #,(transform #'(List field-val ...)) res-expr match-rest)))]))
+           #`(minimatch** val
+                          #,(transform #'(struct-or-transformer field-val ...))
+                          res-expr
+                          match-rest)))]))
 
 (begin-for-syntax
+  (define-syntax-class pat-transformer
+    (pattern (ident:id pat ...))
+    (pattern ident:id))
+  
+  ;; transform : Syntax -> Syntax
   (define (transform stx)
     (define (loop es)
       (with-syntax ([(te ...) (map transform es)])
          #'(te ...)))
     
     (syntax-parse stx
-      [(ident:id pat ...)
-       (let ([slv (syntax-local-value #'ident (lambda () #f))])
+      [trans:pat-transformer
+       (let ([slv (syntax-local-value #'trans.ident (lambda () #f))])
          (if (transformer? slv)
-             (transform ((transformer-stx slv) stx))
-             (loop (syntax->list #'(ident pat ...)))))]
+             (transform ((transformer-expr slv) stx))
+             (let ([es (syntax->list #'trans)])
+               (if es
+                   (loop es)
+                   stx))))]
       [(e ...)
        (loop (syntax->list #'(e ...)))]
       [_ stx])))
@@ -217,7 +228,8 @@
 ;; patterns with the following definition:
 
 (begin-for-syntax
-  (struct transformer (stx)))
+  ;; a pattern transformer
+  (struct transformer (expr)))
 
 (define-syntax (define-pattern-transformer stx)
   (syntax-parse stx
@@ -236,6 +248,16 @@
  (minimatch (list 1 2 3)
             [(List x y z) (list x y z)])
  '(1 2 3))
+
+(define-pattern-transformer Zero
+  (lambda (stx)
+    (syntax-parse stx
+      [_ #'(quote 0)])))
+
+(check-equal?
+ (minimatch (list 1 0)
+            [(List x Zero) (list x 'zero)])
+ '(1 zero))
 
 ;; With that definition, minimatch should support List patterns: A
 ;; pattern of the form (List sub-pattern ...) should match a value if
