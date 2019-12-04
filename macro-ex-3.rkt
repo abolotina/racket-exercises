@@ -27,12 +27,12 @@
   (let ([v val-expr])
     (minimatch* v clause ...)))
 
-(define-syntax minimatch*
-  (syntax-rules ()
-    [(minimatch* v)
-     (error 'minimatch "match failed")]
-    [(minimatch* v [pattern res-expr] clause ...)
-       (minimatch** v pattern res-expr (minimatch* v clause ...))]))
+(define-syntax (minimatch* stx)
+  (syntax-parse stx
+    [(_ v)
+     #'(error 'minimatch "match failed")]
+    [(_ v [pattern res-expr] clause ...)
+     #`(minimatch** v #,(transform #'pattern) res-expr (minimatch* v clause ...))]))
 
 (define-syntax-rule (?) ())
 (define-syntax-rule (app) ())
@@ -54,77 +54,87 @@
                         (minimatch** (cdr val) rest-pattern res-expr match-rest)
                         match-rest)
            match-rest)]
-    [(_ val (? expr) res-expr match-rest)
-     #'(if (expr val)
+    [(_ val (? pred pat ...) res-expr match-rest)
+     (with-syntax* ([len (length (syntax->list #'(pat ...)))]
+                    [vals #'(build-list len (lambda (x) val))])
+       #'(if (pred val)
+             (minimatch-helper vals pat ... res-expr match-rest)
+             match-rest))]
+    [(_ val (app expr pat ...) res-expr match-rest)
+     #'(let ([vals (call-with-values (lambda () (expr val)) list)])
+         (minimatch-helper vals pat ... res-expr match-rest))]
+    [(_ val (struct-id:id field-val ...) res-expr match-rest)
+     (let ([slv (syntax-local-value #'struct-id)])
+       (let* ([struct-info (extract-struct-info slv)]
+              [struct-pred (caddr struct-info)]
+              [fields (reverse (cadddr struct-info))]
+              [fields-count (length fields)]
+              [match-fields
+               (with-syntax ([(field-acc ...) fields])
+                 (if (< 0 fields-count)
+                     (list #'(app (lambda (v) (values (field-acc v) ...))
+                                  field-val ...))
+                     null))])
+         (if (= fields-count (length (syntax->list #'(field-val ...)))) 
+             #`(minimatch** val
+                            (? #,struct-pred #,@match-fields)
+                            res-expr
+                            match-rest)
+             (raise-syntax-error #f (format "invalid number of fields for structure ~s"
+                                            (syntax->datum (cadr struct-info)))
+                                 stx))))]))
+
+(define-syntax (minimatch-helper stx)
+  (syntax-parse stx
+    [(_ vals res-expr match-rest)
+     #'(if (= (length vals) 0)
            res-expr
-           match-rest)]
-    [(_ val (? expr pat1 pat2 ...) res-expr match-rest)
-     #'(if (expr val)
-           (minimatch** val pat1
-                        (minimatch** val (? (lambda (x) #t) pat2 ...)
-                                     res-expr
-                                     match-rest)
+           (error 'minimatch "result arity mismatch"))]
+    [(_ vals pat1 pat2 ... res-expr match-rest)
+     #'(if (> (length vals) 0)
+           (minimatch** (car vals) pat1
+                        (minimatch-helper (cdr vals) pat2 ... res-expr match-rest)
                         match-rest)
-           match-rest)]
-    [(_ val (app expr pat) res-expr match-rest)
-     #'(minimatch** (expr val) pat res-expr match-rest)]
-    [(_ val (app expr pat1 pat2 ...) res-expr match-rest)
-     #'(let ([results (call-with-values (lambda () (expr val)) list)])
-         (minimatch** (car results) pat1
-                      (minimatch** (cdr results)
-                                   (app (lambda (ls) (apply values ls)) pat2 ...)
-                                   res-expr
-                                   match-rest)
-                      match-rest))]
-    [(_ val (struct-or-transformer:id field-val ...) res-expr match-rest)
-     (let ([slv (syntax-local-value #'struct-or-transformer)])
-       (if (struct-info? slv)
-           (let* ([struct-info (extract-struct-info slv)]
-                  [struct-pred (caddr struct-info)]
-                  [fields (reverse (cadddr struct-info))]
-                  [fields-count (length fields)]
-                  [match-fields
-                   (with-syntax ([(field-acc ...) fields])
-                     (if (< 0 fields-count)
-                         (list #'(app (lambda (v) (values (field-acc v) ...))
-                                      field-val ...))
-                         null))])
-             (if (= fields-count (length (syntax->list #'(field-val ...)))) 
-                 #`(minimatch** val
-                                (? #,struct-pred #,@match-fields)
-                                res-expr
-                                match-rest)
-                 (raise-syntax-error #f (format "invalid number of fields for structure ~s"
-                                                (syntax->datum (cadr struct-info)))
-                                     stx)))
-           #`(minimatch** val
-                          #,(transform #'(struct-or-transformer field-val ...))
-                          res-expr
-                          match-rest)))]))
+           (error 'minimatch "result arity mismatch"))]))
 
 (begin-for-syntax
   (define-syntax-class pat-transformer
     (pattern (ident:id pat ...))
     (pattern ident:id))
   
-  ;; transform : Syntax -> Syntax
+  ;; transform : Syntax[Pattern] -> Syntax[FullySimplifiedPattern]
   (define (transform stx)
-    (define (loop es)
-      (with-syntax ([(te ...) (map transform es)])
-         #'(te ...)))
+    ;; loop-pats : (Listof Syntax[Pattern]) -> Syntax[(FullySimplifiedPattern ...)]
+    (define (loop-pats pats)
+      (with-syntax ([(tp ...) (map transform pats)])
+        #'(tp ...)))
+    ;; loop : Syntax[Pattern] -> Syntax[FullySimplifiedPattern]
+    (define (loop e)
+      (syntax-parse e
+        [(cons first-pat rest-pat)
+         #`(cons #,(transform #'first-pat) #,(transform #'rest-pat))]
+        [(? pred pat ...)
+         #`(? pred #,@(loop-pats (syntax->list #'(pat ...))))]
+        [(app fun pat ...)
+         #`(app fun #,@(loop-pats (syntax->list #'(pat ...))))]
+        [(struct-id:id pat ...)
+         #`(struct-id #,@(loop-pats (syntax->list #'(pat ...))))]
+        ;; e : Syntax[(or/c Identifier (quote Datum))]
+        [_ e]))
     
     (syntax-parse stx
       [trans:pat-transformer
        (let ([slv (syntax-local-value #'trans.ident (lambda () #f))])
-         (if (transformer? slv)
-             (transform ((transformer-expr slv) stx))
-             (let ([es (syntax->list #'trans)])
-               (if es
-                   (loop es)
-                   stx))))]
-      [(e ...)
-       (loop (syntax->list #'(e ...)))]
-      [_ stx])))
+         (cond
+           [(transformer? slv)
+            ;; stx : Syntax[(pattern-transformer-id . _)]
+            (let ([tp ((transformer-expr slv) stx)]) ; tp : Syntax[Pattern]
+              (transform tp))]
+           [else
+            ;; stx : Syntax[HeadSimplifiedPattern]
+            (loop stx)]))]
+      ;; stx : Syntax[HeadSimplifiedPattern]
+      [_ (loop stx)])))
 
 (require rackunit)
 
@@ -228,6 +238,7 @@
 ;; patterns with the following definition:
 
 (begin-for-syntax
+  ;; a pattern-transformer is (transformer (Syntax[Pattern] -> Syntax[Pattern]))
   ;; a pattern transformer
   (struct transformer (expr)))
 
@@ -258,6 +269,29 @@
  (minimatch (list 1 0)
             [(List x Zero) (list x 'zero)])
  '(1 zero))
+
+(define-pattern-transformer Id
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ p) #'p])))
+
+(check-equal?
+ (minimatch 'Zero
+            [(quote Zero) 'yes]
+            [other 'no])
+ 'yes)
+
+(check-equal?
+ (minimatch 'Zero
+            [(Id (quote Zero)) 'yes]
+            [other 'no])
+ 'yes)
+
+(check-equal?
+ (minimatch '(List 3 4)
+            [(Id (? (lambda (List) (equal? List '(List 3 4))))) 'yes]
+            [other 'no])
+ 'yes)
 
 ;; With that definition, minimatch should support List patterns: A
 ;; pattern of the form (List sub-pattern ...) should match a value if
